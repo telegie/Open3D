@@ -48,6 +48,7 @@ __global__ void ElementWiseKernel_(int64_t n, func_t f) {
 /// Run a function in parallel on CUDA.
 template <typename func_t>
 void ParallelForCUDA_(const Device& device, int64_t n, const func_t& func) {
+    // printf("ParallelForCUDA_ start");
     if (device.GetType() != Device::DeviceType::CUDA) {
         utility::LogError("ParallelFor for CUDA cannot run on device {}.",
                           device.ToString());
@@ -71,6 +72,7 @@ void ParallelForCUDA_(const Device& device, int64_t n, const func_t& func) {
 /// Run a function in parallel on CPU.
 template <typename func_t>
 void ParallelForCPU_(const Device& device, int64_t n, const func_t& func) {
+    // printf("ParallelForCPU_ start");
     if (!device.IsCPU()) {
         utility::LogError("ParallelFor for CPU cannot run on device {}.",
                           device.ToString());
@@ -79,7 +81,9 @@ void ParallelForCPU_(const Device& device, int64_t n, const func_t& func) {
         return;
     }
 
-#pragma omp parallel for num_threads(utility::EstimateMaxThreads())
+// #pragma omp parallel for num_threads(utility::EstimateMaxThreads())
+// TEMP change to make debugging easier
+#pragma omp parallel for num_threads(1)
     for (int64_t i = 0; i < n; ++i) {
         func(i);
     }

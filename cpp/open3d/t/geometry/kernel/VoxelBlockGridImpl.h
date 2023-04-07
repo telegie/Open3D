@@ -21,6 +21,8 @@
 #include "open3d/utility/Logging.h"
 #include "open3d/utility/Timer.h"
 
+#include <malloc.h>
+
 namespace open3d {
 namespace t {
 namespace geometry {
@@ -81,6 +83,35 @@ void GetVoxelCoordinatesAndFlattenedIndicesCPU
 
 inline OPEN3D_DEVICE index_t
 DeviceGetLinearIdx(index_t xo,
+                   index_t yo,
+                   index_t zo,
+                   index_t curr_block_idx,
+                   index_t resolution,
+                   const ArrayIndexer& nb_block_masks_indexer,
+                   const ArrayIndexer& nb_block_indices_indexer) {
+    index_t xn = (xo + resolution) % resolution;
+    index_t yn = (yo + resolution) % resolution;
+    index_t zn = (zo + resolution) % resolution;
+
+    index_t dxb = Sign(xo - xn);
+    index_t dyb = Sign(yo - yn);
+    index_t dzb = Sign(zo - zn);
+
+    index_t nb_idx = (dxb + 1) + (dyb + 1) * 3 + (dzb + 1) * 9;
+
+    bool block_mask_i =
+            *nb_block_masks_indexer.GetDataPtr<bool>(curr_block_idx, nb_idx);
+    if (!block_mask_i) return -1;
+
+    index_t block_idx_i = *nb_block_indices_indexer.GetDataPtr<index_t>(
+            curr_block_idx, nb_idx);
+
+    return (((block_idx_i * resolution) + zn) * resolution + yn) * resolution +
+           xn;
+}
+
+inline index_t
+DeviceGetLinearIdxCpu(index_t xo,
                    index_t yo,
                    index_t zo,
                    index_t curr_block_idx,
@@ -1308,6 +1339,7 @@ void ExtractTriangleMeshCPU
          float voxel_size,
          float weight_threshold,
          index_t& vertex_count) {
+    utility::LogDebug("ExtractTriangleMeshCPU - 1");
     core::Device device = block_indices.GetDevice();
 
     index_t resolution = block_resolution;
@@ -1362,11 +1394,14 @@ void ExtractTriangleMeshCPU
     // Pass 0: analyze mesh structure, set up one-on-one correspondences
     // from edges to vertices.
 
-    core::ParallelFor(device, n, [=] OPEN3D_DEVICE(index_t widx) {
-        auto GetLinearIdx = [&] OPEN3D_DEVICE(
+    // core::ParallelFor(device, n, [&] OPEN3D_DEVICE(index_t widx) {
+    for (index_t widx{0}; widx < n; ++widx) {
+        // printf("ExtractTriangleMeshCPU - 2-1, widx: %d\n", widx);
+        // auto GetLinearIdx = [&] OPEN3D_DEVICE(
+        auto GetLinearIdx = [&] (
                                     index_t xo, index_t yo, index_t zo,
                                     index_t curr_block_idx) -> index_t {
-            return DeviceGetLinearIdx(xo, yo, zo, curr_block_idx,
+            return DeviceGetLinearIdxCpu(xo, yo, zo, curr_block_idx,
                                       static_cast<index_t>(resolution),
                                       nb_block_masks_indexer,
                                       nb_block_indices_indexer);
@@ -1383,33 +1418,51 @@ void ExtractTriangleMeshCPU
         // Check per-vertex sign in the cube to determine cube
         // type
         index_t table_idx = 0;
+        bool continue_loop{false};
         for (index_t i = 0; i < 8; ++i) {
             index_t linear_idx_i =
-                    GetLinearIdx(xv + vtx_shifts[i][0], yv + vtx_shifts[i][1],
-                                 zv + vtx_shifts[i][2], workload_block_idx);
-            if (linear_idx_i < 0) return;
+                    // GetLinearIdx(xv + vtx_shifts[i][0], yv + vtx_shifts[i][1],
+                    //              zv + vtx_shifts[i][2], workload_block_idx);
+                    GetLinearIdx(xv + vtx_shifts_cpu[i][0], yv + vtx_shifts_cpu[i][1],
+                                 zv + vtx_shifts_cpu[i][2], workload_block_idx);
+            // if (linear_idx_i < 0) return;
+            if (linear_idx_i < 0) {
+                continue_loop = true;
+                break;
+            }
 
             float tsdf_i = tsdf_base_ptr[linear_idx_i];
             float weight_i = weight_base_ptr[linear_idx_i];
-            if (weight_i <= weight_threshold) return;
+            // if (weight_i <= weight_threshold) return;
+            if (weight_i <= weight_threshold) {
+                continue_loop = true;
+                break;
+            }
 
             table_idx |= ((tsdf_i < 0) ? (1 << i) : 0);
         }
+        if (continue_loop) continue;
 
         index_t* mesh_struct_ptr = mesh_structure_indexer.GetDataPtr<index_t>(
                 xv, yv, zv, workload_block_idx);
         mesh_struct_ptr[3] = table_idx;
 
-        if (table_idx == 0 || table_idx == 255) return;
+        // if (table_idx == 0 || table_idx == 255) return;
+        if (table_idx == 0 || table_idx == 255) continue;
 
         // Check per-edge sign determine the cube type
-        index_t edges_with_vertices = edge_table[table_idx];
+        // index_t edges_with_vertices = edge_table[table_idx];
+        index_t edges_with_vertices = edge_table_cpu[table_idx];
         for (index_t i = 0; i < 12; ++i) {
             if (edges_with_vertices & (1 << i)) {
-                index_t xv_i = xv + edge_shifts[i][0];
-                index_t yv_i = yv + edge_shifts[i][1];
-                index_t zv_i = zv + edge_shifts[i][2];
-                index_t edge_i = edge_shifts[i][3];
+                // index_t xv_i = xv + edge_shifts[i][0];
+                // index_t yv_i = yv + edge_shifts[i][1];
+                // index_t zv_i = zv + edge_shifts[i][2];
+                // index_t edge_i = edge_shifts[i][3];
+                index_t xv_i = xv + edge_shifts_cpu[i][0];
+                index_t yv_i = yv + edge_shifts_cpu[i][1];
+                index_t zv_i = zv + edge_shifts_cpu[i][2];
+                index_t edge_i = edge_shifts_cpu[i][3];
 
                 index_t dxb = xv_i / resolution;
                 index_t dyb = yv_i / resolution;
@@ -1420,19 +1473,38 @@ void ExtractTriangleMeshCPU
                 index_t block_idx_i =
                         *nb_block_indices_indexer.GetDataPtr<index_t>(
                                 workload_block_idx, nb_idx);
+                // printf("xv_i: %d, dxb: %d\n", xv_i, dxb);
+                // printf("yv_i: %d, dyb: %d\n", yv_i, dyb);
+                // printf("zv_i: %d, dzb: %d\n", zv_i, dzb);
+                // printf("resolution: %d, block_idx_i: %d\n", resolution, block_idx_i);
                 index_t* mesh_ptr_i =
                         mesh_structure_indexer.GetDataPtr<index_t>(
                                 xv_i - dxb * resolution,
                                 yv_i - dyb * resolution,
                                 zv_i - dzb * resolution,
                                 inv_indices_ptr[block_idx_i]);
+                // printf("inv_indices_ptr[block_idx_i]: %d, n_blocks: %d\n", inv_indices_ptr[block_idx_i], n_blocks);
+
+                // printf("mesh_structure_shape: %d, %d, %d, %d, %d\n", n_blocks, resolution, resolution, resolution, 4);
+                // printf("mesh_ptr_i indices: %d, %d, %d, %d\n",
+                    //    xv_i - dxb * resolution,
+                    //    yv_i - dyb * resolution,
+                    //    zv_i - dzb * resolution,
+                    //    inv_indices_ptr[block_idx_i]);
 
                 // Non-atomic write, but we are safe
+                // size_t mesh_ptr_i_malloc_size{malloc_usable_size(mesh_ptr_i)};
+                // printf("mesh_ptr_i_malloc_size: %d\n", (int)mesh_ptr_i_malloc_size);
+                // printf("ExtractTriangleMeshCPU - 2-12, widx: %d, edge_i: %d\n", widx, edge_i);
                 mesh_ptr_i[edge_i] = -1;
+                // printf("ExtractTriangleMeshCPU - 2-13, widx: %d\n", widx);
             }
         }
-    });
+        // printf("ExtractTriangleMeshCPU - 2-8, widx: %d\n", widx);
+    // });
+    };
 
+    utility::LogDebug("ExtractTriangleMeshCPU - 3");
     // Pass 1: determine valid number of vertices (if not preset)
 #if defined(__CUDACC__)
     core::Tensor count(std::vector<index_t>{0}, {}, core::Int32, device);
@@ -1443,6 +1515,7 @@ void ExtractTriangleMeshCPU
     std::atomic<index_t>* count_ptr = &count_atomic;
 #endif
 
+    utility::LogDebug("ExtractTriangleMeshCPU - 4");
     if (vertex_count < 0) {
         core::ParallelFor(device, n, [=] OPEN3D_DEVICE(index_t widx) {
             // Natural index (0, N) -> (block_idx, voxel_idx)
@@ -1502,6 +1575,7 @@ void ExtractTriangleMeshCPU
     (*count_ptr) = 0;
 #endif
 
+    utility::LogDebug("ExtractTriangleMeshCPU - 5");
     // Pass 2: extract vertices.
 
     core::ParallelFor(device, n, [=] OPEN3D_DEVICE(index_t widx) {
@@ -1615,6 +1689,7 @@ void ExtractTriangleMeshCPU
         }
     });
 
+    utility::LogDebug("ExtractTriangleMeshCPU - 6");
     // Pass 3: connect vertices and form triangles.
     index_t triangle_count = vertex_count * 3;
     triangles = core::Tensor({triangle_count, 3}, core::Int32, device);
@@ -1626,7 +1701,9 @@ void ExtractTriangleMeshCPU
 #else
     (*count_ptr) = 0;
 #endif
-    core::ParallelFor(device, n, [=] OPEN3D_DEVICE(index_t widx) {
+    // core::ParallelFor(device, n, [=] OPEN3D_DEVICE(index_t widx) {
+    for (index_t widx{0}; widx < n; ++widx) {
+        // utility::LogDebug("ExtractTriangleMeshCPU - 6-1, widx: {}", widx);
         // Natural index (0, N) -> (block_idx, voxel_idx)
         index_t workload_block_idx = widx / resolution3;
         index_t voxel_idx = widx % resolution3;
@@ -1640,20 +1717,31 @@ void ExtractTriangleMeshCPU
                 xv, yv, zv, workload_block_idx);
 
         index_t table_idx = mesh_struct_ptr[3];
-        if (tri_count[table_idx] == 0) return;
+        // if (tri_count[table_idx] == 0) return;
+        if (tri_count_cpu[table_idx] == 0) continue;
 
+        // utility::LogDebug("ExtractTriangleMeshCPU - 6-2, widx: {}", widx);
         for (index_t tri = 0; tri < 16; tri += 3) {
-            if (tri_table[table_idx][tri] == -1) return;
+            if (tri_table_cpu[table_idx][tri] == -1) break;
 
-            index_t tri_idx = OPEN3D_ATOMIC_ADD(count_ptr, 1);
+#if defined(__CUDACC__)
+            // index_t tri_idx = OPEN3D_ATOMIC_ADD(count_ptr, 1);
+            index_t tri_idx = 0;
+#else
+            index_t tri_idx = (*count_ptr).fetch_add(1);
+#endif
 
             for (index_t vertex = 0; vertex < 3; ++vertex) {
-                index_t edge = tri_table[table_idx][tri + vertex];
+                index_t edge = tri_table_cpu[table_idx][tri + vertex];
 
-                index_t xv_i = xv + edge_shifts[edge][0];
-                index_t yv_i = yv + edge_shifts[edge][1];
-                index_t zv_i = zv + edge_shifts[edge][2];
-                index_t edge_i = edge_shifts[edge][3];
+                // index_t xv_i = xv + edge_shifts[edge][0];
+                // index_t yv_i = yv + edge_shifts[edge][1];
+                // index_t zv_i = zv + edge_shifts[edge][2];
+                // index_t edge_i = edge_shifts[edge][3];
+                index_t xv_i = xv + edge_shifts_cpu[edge][0];
+                index_t yv_i = yv + edge_shifts_cpu[edge][1];
+                index_t zv_i = zv + edge_shifts_cpu[edge][2];
+                index_t edge_i = edge_shifts_cpu[edge][3];
 
                 index_t dxb = xv_i / resolution;
                 index_t dyb = yv_i / resolution;
@@ -1676,7 +1764,11 @@ void ExtractTriangleMeshCPU
                 triangle_ptr[2 - vertex] = mesh_struct_ptr_i[edge_i];
             }
         }
-    });
+        utility::LogDebug("ExtractTriangleMeshCPU - 6-3, widx: {}, n: {}", widx, n);
+    // });
+    };
+
+    utility::LogDebug("ExtractTriangleMeshCPU - 7");
 
 #if defined(__CUDACC__)
     triangle_count = count.Item<index_t>();

@@ -343,6 +343,7 @@ void ExtractTriangleMesh(const core::Tensor& block_indices,
                          float voxel_size,
                          float weight_threshold,
                          int& vertex_count) {
+    utility::LogDebug("kernel::voxel_grid::ExtractTriangleMesh - 1");
     using tsdf_t = float;
     core::Dtype block_weight_dtype = core::Dtype::Float32;
     core::Dtype block_color_dtype = core::Dtype::Float32;
@@ -353,7 +354,9 @@ void ExtractTriangleMesh(const core::Tensor& block_indices,
         block_color_dtype = block_value_map.at("color").GetDtype();
     }
 
+    utility::LogDebug("kernel::voxel_grid::ExtractTriangleMesh - 2");
     if (block_indices.IsCPU()) {
+        utility::LogDebug("kernel::voxel_grid::ExtractTriangleMesh - CPU");
         DISPATCH_VALUE_DTYPE_TO_TEMPLATE(
                 block_weight_dtype, block_color_dtype, [&] {
                     ExtractTriangleMeshCPU<tsdf_t, weight_t, color_t>(
@@ -365,6 +368,7 @@ void ExtractTriangleMesh(const core::Tensor& block_indices,
                 });
     } else if (block_indices.IsCUDA()) {
 #ifdef BUILD_CUDA_MODULE
+        utility::LogDebug("kernel::voxel_grid::ExtractTriangleMesh - CUDA");
         DISPATCH_VALUE_DTYPE_TO_TEMPLATE(
                 block_weight_dtype, block_color_dtype, [&] {
                     ExtractTriangleMeshCUDA<tsdf_t, weight_t, color_t>(
@@ -380,6 +384,7 @@ void ExtractTriangleMesh(const core::Tensor& block_indices,
     } else {
         utility::LogError("Unimplemented device");
     }
+    utility::LogDebug("kernel::voxel_grid::ExtractTriangleMesh - 3");
 }
 
 }  // namespace voxel_grid

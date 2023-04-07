@@ -435,12 +435,14 @@ PointCloud VoxelBlockGrid::ExtractPointCloud(float weight_threshold,
 
 TriangleMesh VoxelBlockGrid::ExtractTriangleMesh(float weight_threshold,
                                                  int estimated_vertex_number) {
+    utility::LogDebug("VoxelBlockGrid::ExtractTriangleMesh - 1");
     AssertInitialized();
     core::Tensor active_buf_indices_i32 = block_hashmap_->GetActiveIndices();
     core::Tensor active_nb_buf_indices, active_nb_masks;
     std::tie(active_nb_buf_indices, active_nb_masks) =
             BufferRadiusNeighbors(block_hashmap_, active_buf_indices_i32);
 
+    utility::LogDebug("VoxelBlockGrid::ExtractTriangleMesh - 2");
     core::Device device = block_hashmap_->GetDevice();
     // Map active indices to [0, num_blocks] to be allocated for surface mesh.
     int64_t num_blocks = block_hashmap_->Size();
@@ -451,23 +453,27 @@ TriangleMesh VoxelBlockGrid::ExtractTriangleMesh(float weight_threshold,
     inverse_index_map.IndexSet({active_buf_indices_i32.To(core::Int64)},
                                iota_map);
 
+    utility::LogDebug("VoxelBlockGrid::ExtractTriangleMesh - 3");
     core::Tensor vertices, triangles, vertex_normals, vertex_colors;
 
     core::Tensor block_keys = block_hashmap_->GetKeyTensor();
     TensorMap block_value_map =
             ConstructTensorMap(*block_hashmap_, name_attr_map_);
+    utility::LogDebug("VoxelBlockGrid::ExtractTriangleMesh - 4");
     kernel::voxel_grid::ExtractTriangleMesh(
             active_buf_indices_i32, inverse_index_map, active_nb_buf_indices,
             active_nb_masks, block_keys, block_value_map, vertices, triangles,
             vertex_normals, vertex_colors, block_resolution_, voxel_size_,
             weight_threshold, estimated_vertex_number);
 
+    utility::LogDebug("VoxelBlockGrid::ExtractTriangleMesh - 5");
     TriangleMesh mesh(vertices, triangles);
     mesh.SetVertexNormals(vertex_normals);
     if (vertex_colors.GetLength() == vertices.GetLength()) {
         mesh.SetVertexColors(vertex_colors);
     }
 
+    utility::LogDebug("VoxelBlockGrid::ExtractTriangleMesh - 6");
     return mesh;
 }
 
