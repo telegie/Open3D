@@ -1703,24 +1703,38 @@ void ExtractTriangleMeshCPU
 #endif
     // core::ParallelFor(device, n, [=] OPEN3D_DEVICE(index_t widx) {
     for (index_t widx{0}; widx < n; ++widx) {
+    // 134220800 is when segfaults happen
+    // for (index_t widx{134220800}; widx < n; ++widx) {
         // utility::LogDebug("ExtractTriangleMeshCPU - 6-1, widx: {}", widx);
         // Natural index (0, N) -> (block_idx, voxel_idx)
         index_t workload_block_idx = widx / resolution3;
         index_t voxel_idx = widx % resolution3;
 
+        // utility::LogDebug("ExtractTriangleMeshCPU - 6-2, widx: {}", widx);
         // voxel_idx -> (x_voxel, y_voxel, z_voxel)
         index_t xv, yv, zv;
         voxel_indexer.WorkloadToCoord(voxel_idx, &xv, &yv, &zv);
 
+        // utility::LogDebug("ExtractTriangleMeshCPU - 6-3, widx: {}", widx);
         // Obtain voxel's mesh struct ptr
         index_t* mesh_struct_ptr = mesh_structure_indexer.GetDataPtr<index_t>(
                 xv, yv, zv, workload_block_idx);
 
+        // utility::LogDebug("mesh_structure_shape: {}, {}, {}, {}, {}\n", n_blocks, resolution, resolution, resolution, 4);
+        // utility::LogDebug("xv: {}, yv: {}, zv: {}, workload_block_idx: {}", xv, yv, zv, workload_block_idx);
+        // utility::LogDebug("ExtractTriangleMeshCPU - 6-4, widx: {}", widx);
         index_t table_idx = mesh_struct_ptr[3];
+        // utility::LogDebug("ExtractTriangleMeshCPU - 6-5, widx: {}, table_idx: {}", widx, table_idx);
         // if (tri_count[table_idx] == 0) return;
+        // Hanseul's quick fix
+        if (table_idx > 256) {
+            utility::LogDebug("table_idx: {}", table_idx);
+            continue;
+        }
+
         if (tri_count_cpu[table_idx] == 0) continue;
 
-        // utility::LogDebug("ExtractTriangleMeshCPU - 6-2, widx: {}", widx);
+        // utility::LogDebug("ExtractTriangleMeshCPU - 6-6, widx: {}", widx);
         for (index_t tri = 0; tri < 16; tri += 3) {
             if (tri_table_cpu[table_idx][tri] == -1) break;
 
@@ -1764,7 +1778,7 @@ void ExtractTriangleMeshCPU
                 triangle_ptr[2 - vertex] = mesh_struct_ptr_i[edge_i];
             }
         }
-        utility::LogDebug("ExtractTriangleMeshCPU - 6-3, widx: {}, n: {}", widx, n);
+        // utility::LogDebug("ExtractTriangleMeshCPU - 6-5, widx: {}, n: {}", widx, n);
     // });
     };
 
